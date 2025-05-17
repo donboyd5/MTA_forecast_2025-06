@@ -66,6 +66,7 @@ library(vtable)
 
 DDTF <- r"(E:\data\nys_monthly_tax\data)"
 
+x90 <- theme(axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5))
 
 ```
 
@@ -107,7 +108,7 @@ pmt2
 
 pmtlong <- pmt2 |>
   select(date, pmtwage, pmtnesenet, pmttot) |>
-  pivot_longer(-date)
+  pivot_longer(-date, names_to = "vname")
 
 pmt2 |> tail(12)
 
@@ -127,7 +128,7 @@ pmtlong |>
   filter(year(date) >= 2019) |>
   mutate(date = yearmonth(date)) |>
   as_tsibble(index = date) |>
-  gg_season(value) +
+  feasts::gg_season(value) +
   geom_line(linewidth = 1) +
   geom_point(size = 2) +
   scale_y_continuous(
@@ -136,6 +137,23 @@ pmtlong |>
   ) +
   labs(x = "") +
   ggtitle("PMT wage tax revenue") +
+  theme_bw() +
+  x90
+
+pmtlong |>
+  filter(vname == "pmtnesenet") |>
+  filter(year(date) >= 2019) |>
+  mutate(date = yearmonth(date)) |>
+  as_tsibble(index = date) |>
+  feasts::gg_season(value) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    name = "$ millions",
+    labels = label_comma(scale = 1e-3, accuracy = 1)
+  ) +
+  labs(x = "") +
+  ggtitle("PMT NESE payments") +
   theme_bw() +
   x90
 
