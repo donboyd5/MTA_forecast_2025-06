@@ -9,6 +9,7 @@ editor-options:
 ## Setup
 
 ```{r}
+#| label: libraries
 
 library(rlang)
 library(tidyverse)
@@ -64,6 +65,8 @@ library(vtable)
 # E:\data\nys_monthly_tax\data
 # monthly_collections.rds
 
+DRES <- here::here("results")
+
 DDTF <- r"(E:\data\nys_monthly_tax\data)"
 
 x90 <- theme(axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5))
@@ -73,7 +76,7 @@ x90 <- theme(axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5))
 
 ## Get data
 
-Note that units are thousands
+Note that units are DOLLARS (not thousands).
 
 I think the nese tax was included in the state PIT for a while?? go back and check
 
@@ -113,6 +116,27 @@ pmtlong <- pmt2 |>
 pmt2 |> tail(12)
 
 ```
+
+Construct state pit approximating the NESE gross concept:
+
+PIT estimated + final
+
+```{r}
+#| label: state-pit
+
+count(df |> filter(vtype == "pit"), vname, tax)
+
+nys <- df |>
+  filter(vname %in% c("pit_et", "pit_fr", "pit_ref")) |>
+  filter(year(date) >= 2020) |>
+  select(date, vname, value) |>
+  pivot_wider(names_from = vname) |>
+  mutate(pitetfr = pit_et + pit_fr)
+nys
+
+
+```
+
 
 ```{r}
 #| label: show-tax
@@ -159,4 +183,47 @@ pmtlong |>
 
 ```
 
+## Examine NESE in comparison to state estimated tax and final returns
 
+What is going on with MTA October NESE collections in 2022, 2023, 2024???
+
+NESE is on the same payment schedule as state PIT estimated payments: Apr, Jun, Sep, and Jan. So why is the MTA 2022, 2023, and 2024 bump in Oct not Sep? Given that it starts in 2022, it probably (?) is not related to the 2023 tax increase. Therefore it might not be something we should think of as related to prior years -- it could be current money.
+
+```{r}
+#| label: nese-vs-state
+
+pdata <- bind_rows(
+  pmt2 |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pmtnesenet) |>
+    mutate(type = "mta"),
+  nys |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pitetfr) |> # pit_et or pitetfr
+    mutate(type = "nys")
+)
+
+p <- pdata |>
+  filter(year(date) >= 2019) |>
+  mutate(
+    year = year(date) |> as.factor(),
+    monthf = factor(month.abb[month(date)], levels = month.abb)
+  ) |>
+  ggplot(aes(monthf, value, colour = year, group = year)) +
+  geom_line() +
+  geom_point() +
+  scale_x_discrete(name = NULL, limits = month.abb) +
+  scale_y_continuous(
+    name = "Collections, $ millions",
+    labels = scales::label_comma(scale = 1e-6)
+  ) +
+  facet_wrap(facets = ~type, ncol = 1, scales = "free") +
+  theme_bw() +
+  ggtitle(
+    label = "MTA Net earnings from self-employment (NESE) tax compared to NYS PIT estimated tax + final returns"
+  )
+p
+
+ggsave(filename = fs::path(DRES, "nese_vs_nys.png"), plot = p, width = 10)
+
+```
