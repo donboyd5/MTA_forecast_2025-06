@@ -58,6 +58,8 @@ library(vtable)
 # # https://cran.r-project.org/web/packages/usmap/vignettes/mapping.html
 # library(usmap)
 
+source(here::here("R", "libraries_ts.R"))
+
 ```
 
 ```{r}
@@ -73,7 +75,6 @@ x90 <- theme(axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5))
 
 ```
 
-
 ## Get data
 
 Note that units are DOLLARS (not thousands).
@@ -81,6 +82,7 @@ Note that units are DOLLARS (not thousands).
 I think the nese tax was included in the state PIT for a while?? go back and check
 
 ```{r}
+#| label: get-data
 
 df <- readRDS(fs::path(DDTF, "monthly_collections.rds"))
 glimpse(df)
@@ -105,7 +107,15 @@ pmt2 <- pmt |>
   select(-tax) |>
   pivot_wider(names_from = vname, values_fill = 0) |>
   mutate(pmttot = pmtwage + pmtnesenet) |>
-  select(date, pmtwage, pmtnesenet, pmttot, pmtnesegross, pmtneseref)
+  select(
+    date,
+    pmtwage,
+    pmtnesenet,
+    pmttot,
+    pmtnesegross,
+    pmtscoffset,
+    pmtneseref
+  )
 
 pmt2
 
@@ -127,25 +137,29 @@ PIT estimated + final
 count(df |> filter(vtype == "pit"), vname, tax)
 
 nys <- df |>
-  filter(vname %in% c("pit_et", "pit_fr", "pit_ref")) |>
-  filter(year(date) >= 2020) |>
+  filter(vname %in% c("pit_wh", "pit_et", "pit_fr", "pit_ref")) |>
+  filter(year(date) >= 2019) |>
   select(date, vname, value) |>
   pivot_wider(names_from = vname) |>
   mutate(pitetfr = pit_et + pit_fr)
 nys
 
+pmt2 |>
+  ggplot(aes(date, pmtscoffset)) +
+  geom_line() +
+  geom_point()
+
 
 ```
-
 
 ```{r}
 #| label: show-tax
 #| output: true
 
-pmtlong |>
-  ggplot(aes(date, value)) +
-  geom_line() +
-  facet_wrap(~name, scales = "free")
+# pmtlong |>
+#   ggplot(aes(date, value)) +
+#   geom_line() +
+#   facet_wrap(~vname, scales = "free")
 
 pmtlong |>
   filter(vname == "pmtwage") |>
@@ -183,14 +197,14 @@ pmtlong |>
 
 ```
 
-## Examine NESE in comparison to state estimated tax and final returns
+## MTA NESE tax compared to state estimated tax and final returns
 
 What is going on with MTA October NESE collections in 2022, 2023, 2024???
 
 NESE is on the same payment schedule as state PIT estimated payments: Apr, Jun, Sep, and Jan. So why is the MTA 2022, 2023, and 2024 bump in Oct not Sep? Given that it starts in 2022, it probably (?) is not related to the 2023 tax increase. Therefore it might not be something we should think of as related to prior years -- it could be current money.
 
 ```{r}
-#| label: nese-vs-state
+#| label: nesenet-vs-state
 
 pdata <- bind_rows(
   pmt2 |>
@@ -224,6 +238,176 @@ p <- pdata |>
   )
 p
 
-ggsave(filename = fs::path(DRES, "nese_vs_nys.png"), plot = p, width = 10)
+ggsave(filename = fs::path(DRES, "nesenet_vs_nys.png"), plot = p, width = 10)
+
+```
+
+
+```{r}
+#| label: nesegross-vs-state
+
+pdata <- bind_rows(
+  pmt2 |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pmtnesegross) |>
+    mutate(type = "mta"),
+  nys |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pitetfr) |> # pit_et or pitetfr
+    mutate(type = "nys")
+)
+
+p <- pdata |>
+  filter(year(date) >= 2019) |>
+  mutate(
+    year = year(date) |> as.factor(),
+    monthf = factor(month.abb[month(date)], levels = month.abb)
+  ) |>
+  ggplot(aes(monthf, value, colour = year, group = year)) +
+  geom_line() +
+  geom_point() +
+  scale_x_discrete(name = NULL, limits = month.abb) +
+  scale_y_continuous(
+    name = "Collections, $ millions",
+    labels = scales::label_comma(scale = 1e-6)
+  ) +
+  facet_wrap(facets = ~type, ncol = 1, scales = "free") +
+  theme_bw() +
+  ggtitle(
+    label = "MTA Net earnings from self-employment (NESE) tax GROSS compared to NYS PIT estimated tax + final returns"
+  )
+p
+
+ggsave(filename = fs::path(DRES, "nesegross_vs_nys.png"), plot = p, width = 10)
+
+```
+
+
+
+```{r}
+#| label: nese-only
+
+pdata <- pmt2 |>
+  filter(year(date) >= 2022) |>
+  select(date, pmtnesenet, pmtnesegross) |>
+  pivot_longer(-date)
+
+p <- pdata |>
+  ggplot(aes(date, value, colour = name)) +
+  geom_line() +
+  geom_point() +
+  scale_x_date(
+    name = NULL,
+    breaks = "3 months",
+    labels = scales::label_date(format = "%Y-%b")
+  ) +
+  scale_y_continuous(
+    name = "Collections, $ millions",
+    labels = scales::label_comma(scale = 1e-6)
+  ) +
+  x90 +
+  theme_bw() +
+  ggtitle(
+    label = "MTA Net earnings from self-employment (NESE) tax"
+  )
+p
+
+
+pdata <- pmt2 |>
+  filter(year(date) >= 2022) |>
+  select(date, pmtscoffset) |>
+  pivot_longer(-date)
+
+p <- pdata |>
+  ggplot(aes(date, value, colour = name)) +
+  geom_line() +
+  geom_point() +
+  scale_x_date(
+    name = NULL,
+    breaks = "3 months",
+    labels = scales::label_date(format = "%Y-%b")
+  ) +
+  scale_y_continuous(
+    name = "Collections, $ millions",
+    labels = scales::label_comma(scale = 1e-6)
+  ) +
+  x90 +
+  theme_bw() +
+  ggtitle(
+    label = "MTA Net earnings from self-employment (NESE) tax"
+  )
+p
+
+# ggsave(filename = fs::path(DRES, "nese_vs_nys.png"), plot = p, width = 10)
+```
+
+## MTA wage tax compared to state withholding tax
+
+```{r}
+#| label: wagetax-vs-state
+
+pdata <- bind_rows(
+  pmt2 |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pmtwage) |>
+    mutate(type = "mta"),
+  nys |>
+    filter(year(date) >= 2019) |>
+    select(date, value = pit_wh) |>
+    mutate(type = "nys")
+)
+
+p <- pdata |>
+  filter(year(date) >= 2019) |>
+  mutate(
+    year = year(date) |> as.factor(),
+    monthf = factor(month.abb[month(date)], levels = month.abb)
+  ) |>
+  ggplot(aes(monthf, value, colour = year, group = year)) +
+  geom_line() +
+  geom_point() +
+  scale_x_discrete(name = NULL, limits = month.abb) +
+  scale_y_continuous(
+    name = "Collections, $ millions",
+    labels = scales::label_comma(scale = 1e-6)
+  ) +
+  facet_wrap(facets = ~type, ncol = 1, scales = "free") +
+  theme_bw() +
+  ggtitle(
+    label = "MTA PMT wage tax compared to NYS PIT withholding"
+  )
+p
+
+ggsave(filename = fs::path(DRES, "wagetax_vs_nys.png"), plot = p, width = 10)
+
+p <- pdata |>
+  arrange(type, date) |>
+  mutate(pch = value / lag(value, 12) - 1, .by = type) |>
+  filter(year(date) >= 2024) |>
+  ggplot(aes(date, pch, colour = type)) +
+  geom_line() +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  scale_x_date(
+    name = NULL,
+    breaks = "3 months",
+    labels = scales::label_date(format = "%Y-%b")
+  ) +
+  scale_y_continuous(
+    breaks = seq(-.1, 1, .05),
+    labels = scales::label_percent(accuracy = 1)
+  ) +
+  ggtitle(
+    label = "MTA wage tax and NYS withholding tax",
+    subtitle = "% growth year over year"
+  ) +
+  theme_bw()
+p
+
+ggsave(
+  filename = fs::path(DRES, "wagetax_pch_vs_nys.png"),
+  plot = p,
+  width = 10
+)
 
 ```
