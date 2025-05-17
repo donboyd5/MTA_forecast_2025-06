@@ -1,0 +1,8 @@
+---
+format: html
+editor-options: 
+  chunk-output-type: console
+---
+
+# Prepare and analyze PMT forecast for the July 2025 MTA financial plan
+

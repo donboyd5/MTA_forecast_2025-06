@@ -1,0 +1,144 @@
+---
+format: html
+editor-options: 
+  chunk-output-type: console
+---
+
+# Analysis
+
+## Setup
+
+```{r}
+
+library(rlang)
+library(tidyverse)
+tprint <- 75 # default tibble print
+options(tibble.print_max = tprint, tibble.print_min = tprint) # show up to tprint rows
+
+library(fs)
+
+# tools
+library(vroom)
+library(readxl)
+library(openxlsx) # for writing xlsx files
+library(lubridate)
+library(RColorBrewer)
+library(RcppRoll)
+library(fredr)
+library(tidycensus)
+
+# boyd libraries
+library(btools)
+library(bdata)
+library(bggtools)
+library(bmaps)
+
+# graphics
+library(scales)
+library(ggbeeswarm)
+library(patchwork)
+library(gridExtra)
+library(ggrepel)
+library(ggbreak)
+
+# tables
+library(formattable)
+library(knitr)
+library(kableExtra)
+library(DT)
+library(gt)
+library(gtExtras)
+library(janitor)
+library(skimr)
+library(vtable)
+
+# maps
+# library(maps)
+# # https://cran.r-project.org/web/packages/usmap/vignettes/mapping.html
+# library(usmap)
+
+```
+
+```{r}
+#| label: constants
+# E:\data\nys_monthly_tax\data
+# monthly_collections.rds
+
+DDTF <- r"(E:\data\nys_monthly_tax\data)"
+
+
+```
+
+
+## Get data
+
+Note that units are thousands
+
+I think the nese tax was included in the state PIT for a while?? go back and check
+
+```{r}
+
+df <- readRDS(fs::path(DDTF, "monthly_collections.rds"))
+glimpse(df)
+
+count(df |> filter(vtype == "local"), vname, tax)
+
+# df |>
+#   filter(vname == "local_congestion") |>
+#   ggplot(aes(date, value)) +
+#   geom_line() +
+#   scale_x_date(breaks = "1 year")
+
+first_data_date <- "2009-10-01"
+pmt <- df |>
+  filter(str_detect(vname, "pmt"), date >= first_data_date) |>
+  mutate(vname = str_remove(vname, "local_")) |>
+  select(date, vname, tax, value)
+glimpse(pmt)
+count(pmt, vname, tax)
+
+pmt2 <- pmt |>
+  select(-tax) |>
+  pivot_wider(names_from = vname, values_fill = 0) |>
+  mutate(pmttot = pmtwage + pmtnesenet) |>
+  select(date, pmtwage, pmtnesenet, pmttot, pmtnesegross, pmtneseref)
+
+pmt2
+
+pmtlong <- pmt2 |>
+  select(date, pmtwage, pmtnesenet, pmttot) |>
+  pivot_longer(-date)
+
+pmt2 |> tail(12)
+
+```
+
+```{r}
+#| label: show-tax
+#| output: true
+
+pmtlong |>
+  ggplot(aes(date, value)) +
+  geom_line() +
+  facet_wrap(~name, scales = "free")
+
+pmtlong |>
+  filter(vname == "pmtwage") |>
+  filter(year(date) >= 2019) |>
+  mutate(date = yearmonth(date)) |>
+  as_tsibble(index = date) |>
+  gg_season(value) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  scale_y_continuous(
+    name = "$ millions",
+    labels = label_comma(scale = 1e-3, accuracy = 1)
+  ) +
+  labs(x = "") +
+  ggtitle("PMT wage tax revenue") +
+  theme_bw() +
+  x90
+
+```
+
+
