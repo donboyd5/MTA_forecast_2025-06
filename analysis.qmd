@@ -11,54 +11,79 @@ editor-options:
 ```{r}
 #| label: libraries
 
-library(rlang)
-library(tidyverse)
-tprint <- 75 # default tibble print
-options(tibble.print_max = tprint, tibble.print_min = tprint) # show up to tprint rows
+libs <- function() {
+  library(rlang)
+  library(tidyverse)
+  tprint <- 75 # default tibble print
+  options(tibble.print_max = tprint, tibble.print_min = tprint) # show up to tprint rows
 
-library(fs)
+  library(fs)
 
-# tools
-library(vroom)
-library(readxl)
-library(openxlsx) # for writing xlsx files
-library(lubridate)
-library(RColorBrewer)
-library(RcppRoll)
-library(fredr)
-library(tidycensus)
+  # tools
+  library(vroom)
+  library(readxl)
+  library(openxlsx2) # for writing xlsx files
+  library(lubridate)
+  library(RColorBrewer)
+  library(RcppRoll)
+  library(fredr)
+  library(tidycensus)
 
-# boyd libraries
-library(btools)
-library(bdata)
-library(bggtools)
-library(bmaps)
+  # boyd libraries
+  library(btools)
+  library(bdata)
+  library(bggtools)
+  library(bmaps)
 
-# graphics
-library(scales)
-library(ggbeeswarm)
-library(patchwork)
-library(gridExtra)
-library(ggrepel)
-library(ggbreak)
+  # graphics
+  library(scales)
+  library(ggbeeswarm)
+  library(patchwork)
+  library(gridExtra)
+  library(ggrepel)
+  library(ggbreak)
 
-# tables
-library(formattable)
-library(knitr)
-library(kableExtra)
-library(DT)
-library(gt)
-library(gtExtras)
-library(janitor)
-library(skimr)
-library(vtable)
+  # tables
+  library(formattable)
+  library(knitr)
+  library(kableExtra)
+  library(DT)
+  library(gt)
+  library(gtExtras)
+  library(janitor)
+  library(skimr)
+  library(vtable)
 
-# maps
-# library(maps)
-# # https://cran.r-project.org/web/packages/usmap/vignettes/mapping.html
-# library(usmap)
+  # maps
+  # library(maps)
+  # # https://cran.r-project.org/web/packages/usmap/vignettes/mapping.html
+  # library(usmap)
 
-source(here::here("R", "libraries_ts.R"))
+  source(here::here("R", "libraries_ts.R"))
+}
+
+libs()
+rm(libs)
+
+```
+
+```{r}
+#| label: function-seasonplot
+
+splot <- function(pdata, facetvar) {
+  # monthly seasonplot with facets
+  pdata |>
+    mutate(
+      year = year(date) |> as.factor(),
+      monthf = factor(month.abb[month(date)], levels = month.abb)
+    ) |>
+    ggplot(aes(monthf, value, colour = year, group = year)) +
+    geom_line() +
+    geom_point() +
+    scale_x_discrete(name = NULL, limits = month.abb) +
+    facet_wrap(facets = vars({{ facetvar }}), ncol = 1, scales = "free") +
+    theme_bw()
+}
 
 ```
 
@@ -68,14 +93,100 @@ source(here::here("R", "libraries_ts.R"))
 # monthly_collections.rds
 
 DRES <- here::here("results")
-
 DDTF <- r"(E:\data\nys_monthly_tax\data)"
+DQCEW <- r"(E:\data\qcew\nysdol\data)"
 
-x90 <- theme(axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5))
+x90 <- theme(
+  axis.text.x = element_text(angle = -90, vjust = 0, hjust = 0.5)
+)
 
 ```
 
-## Get data
+## Get QCEW quarterly
+
+```{r}
+#| label: get-qcew
+
+qmta1 <- readRDS(fs::path(DQCEW, "qcew_statemta.rds"))
+glimpse(qmta1)
+count(qmta1, owner)
+
+qmta2 <- qmta1 |>
+  filter(as.integer(owner) == 1, naics_level == 2, naics == "00") |>
+  mutate(emp = pmean(mnth1emp, mnth2emp, mnth3emp)) |>
+  select(date, areatype, area, nyc, emp, totwage)
+
+qmta2 |> filter(areatype == "state") |> ggplot(aes(date, emp)) + geom_line()
+
+# collapse to state, mta, nyc, suburbs file
+qsuburbs <- qmta2 |>
+  filter(areatype == "county", !nyc) |>
+  summarise(
+    n = n(),
+    emp = sum(emp),
+    totwage = sum(totwage),
+    .by = c(date, areatype, nyc)
+  ) |>
+  mutate(area = "suburbs")
+
+qnyc <- qmta2 |>
+  filter(areatype == "county", nyc) |>
+  summarise(
+    n = n(),
+    emp = sum(emp),
+    totwage = sum(totwage),
+    .by = c(date, areatype, nyc)
+  ) |>
+  mutate(area = "nyc")
+
+qmtatot <- qmta2 |>
+  filter(areatype == "county") |>
+  summarise(
+    n = n(),
+    emp = sum(emp),
+    totwage = sum(totwage),
+    .by = c(date, areatype)
+  ) |>
+  mutate(area = "mta")
+
+qnys <- qmta2 |>
+  filter(areatype == "state") |>
+  summarise(
+    n = n(),
+    emp = sum(emp),
+    totwage = sum(totwage),
+    .by = c(date, areatype)
+  ) |>
+  mutate(area = "nys")
+
+qmta <- bind_rows(
+  qnys,
+  qmtatot,
+  qnyc,
+  qsuburbs
+) |>
+  select(date, area, emp, totwage) |>
+  mutate(avgwage = totwage / emp) |>
+  arrange(area, date)
+
+glimpse(qmta)
+count(qmta, area)
+summary(qmta)
+
+f <- function(var) {
+  qmta |>
+    # select(date, area, value = all_of(var)) |>
+    ggplot(aes(date, .data[[var]], colour = area)) +
+    geom_line() +
+    geom_point()
+}
+# f("totwage")
+# f("emp")
+# f("avgwage")
+
+```
+
+## Get tax data
 
 Note that units are DOLLARS (not thousands).
 
@@ -96,34 +207,36 @@ count(df |> filter(vtype == "local"), vname, tax)
 #   scale_x_date(breaks = "1 year")
 
 first_data_date <- "2009-10-01"
-pmt <- df |>
+pmt1 <- df |>
   filter(str_detect(vname, "pmt"), date >= first_data_date) |>
   mutate(vname = str_remove(vname, "local_")) |>
   select(date, vname, tax, value)
-glimpse(pmt)
-count(pmt, vname, tax)
+glimpse(pmt1)
+count(pmt1, vname, tax)
 
-pmt2 <- pmt |>
+pmt2 <- pmt1 |>
   select(-tax) |>
   pivot_wider(names_from = vname, values_fill = 0) |>
   mutate(pmttot = pmtwage + pmtnesenet) |>
   select(
     date,
+    pmttot,
     pmtwage,
     pmtnesenet,
-    pmttot,
     pmtnesegross,
-    pmtscoffset,
-    pmtneseref
+    pmtneseref,
+    pmtscoffset
   )
 
 pmt2
 
-pmtlong <- pmt2 |>
+pmt <- pmt2 # our preferred name
+
+pmtlong <- pmt |>
   select(date, pmtwage, pmtnesenet, pmttot) |>
   pivot_longer(-date, names_to = "vname")
 
-pmt2 |> tail(12)
+pmt |> tail(12)
 
 ```
 
@@ -144,7 +257,7 @@ nys <- df |>
   mutate(pitetfr = pit_et + pit_fr)
 nys
 
-pmt2 |>
+pmt |>
   ggplot(aes(date, pmtscoffset)) +
   geom_line() +
   geom_point()
@@ -197,6 +310,75 @@ pmtlong |>
 
 ```
 
+## Write raw data
+
+```{r}
+#| label: write-data
+
+area_order <- c("nys", "mta", "nyc", "suburbs")
+wage_sheet <- qmta |>
+  select(date, area, totwage) |>
+  mutate(area = factor(area, levels = area_order)) |>
+  arrange(area, date) |>
+  mutate(
+    totwage = totwage / 1e6,
+    pchya = totwage / lag(totwage, 4) - 1,
+    .by = c(area)
+  ) |>
+  pivot_wider(names_from = area, values_from = c(pchya, totwage)) |>
+  select(date, starts_with("totwage"), starts_with("pchya"))
+
+pmt
+
+pmt_monthly_sheet <- pmt |>
+  arrange(date) |>
+  mutate(
+    across(
+      -date, # every column except date
+      \(x) x / lag(x, 12) - 1, # year-ago % change
+      .names = "{.col}_pchya" # add “_pchya” suffix
+    )
+  )
+
+pmt_quarterly_sheet <- pmt |>
+  filter(date < "2025-04-01") |>
+  arrange(date) |>
+  mutate(date = fdoq(date)) |>
+  summarise(across(everything(), sum), .by = date) |>
+  mutate(
+    across(
+      -date, # every column except date
+      \(x) x / lag(x, 4) - 1, # year-ago % change
+      .names = "{.col}_pchya" # add “_pchya” suffix
+    )
+  )
+
+
+wb <- wb_workbook() |>
+  wb_add_worksheet(sheet = "data_qcew") |>
+  wb_add_data(x = qmta) |>
+  wb_add_worksheet(sheet = "data_wages") |>
+  wb_add_data(x = wage_sheet) |>
+  wb_add_worksheet(sheet = "data_pmt_monthly") |>
+  wb_add_data(x = pmt_monthly_sheet) |>
+  wb_add_worksheet(sheet = "data_pmt_quarterly") |>
+  wb_add_data(x = pmt_quarterly_sheet) |>
+  wb_set_order(c(
+    "data_qcew",
+    "data_wages",
+    "data_pmt_monthly",
+    "data_pmt_quarterly"
+  ))
+
+fname <- "pmt_forecast_analysis_base_2025-05.xlsx"
+xpath <- here::here("results", fname)
+
+wb |>
+  wb_save(file = xpath)
+
+glimpse(qmta)
+```
+
 ## MTA NESE tax compared to state estimated tax and final returns
 
 What is going on with MTA October NESE collections in 2022, 2023, 2024???
@@ -242,7 +424,6 @@ ggsave(filename = fs::path(DRES, "nesenet_vs_nys.png"), plot = p, width = 10)
 
 ```
 
-
 ```{r}
 #| label: nesegross-vs-state
 
@@ -281,8 +462,6 @@ p
 ggsave(filename = fs::path(DRES, "nesegross_vs_nys.png"), plot = p, width = 10)
 
 ```
-
-
 
 ```{r}
 #| label: nese-only
@@ -406,6 +585,144 @@ p
 
 ggsave(
   filename = fs::path(DRES, "wagetax_pch_vs_nys.png"),
+  plot = p,
+  width = 10
+)
+
+```
+
+## The net self-employment earnings tax
+
+```{r}
+nese <- pmt2 |>
+  select(-pmtwage, -pmttot) |>
+  mutate(
+    nesenetcalc = pmtnesegross + pmtscoffset - pmtneseref,
+    diff = nesenetcalc - pmtnesenet
+  )
+```
+
+```{r}
+#| label: nese-table
+#| output: true
+
+tabdata <- nese |>
+  select(date, pmtnesenet) |>
+  mutate(year = year(date)) |>
+  summarise(nese = sum(pmtnesenet), .by = year) |>
+  arrange(year) |>
+  mutate(pch = nese / lag(nese) - 1) |>
+  filter(year %in% 2016:2024)
+
+tabdata |>
+  gt() |>
+  tab_header(
+    "MTA net earnings from self-employment tax collections",
+    subtitle = "Amounts in $ millions"
+  ) |>
+  fmt_number(columns = nese, scale = 1e-6) |>
+  fmt_percent(columns = pch, decimals = 1)
+
+```
+
+```{r}
+#| label: nese-collection-components
+
+pdata <- nese |>
+  filter(year(date) %in% 2019:2025) |>
+  select(-nesenetcalc, -diff) |>
+  mutate(year = year(date), pmtneseref = -pmtneseref) |>
+  pivot_longer(cols = -c(year, date)) |>
+  mutate(
+    name = str_remove(name, "pmtnese"),
+    name = factor(
+      name,
+      levels = c("net", "gross", "ref", "pmtscoffset"),
+      labels = c("total", "gross", "refunds", "state/city offset")
+    )
+  ) |>
+  arrange(date, name)
+
+basesize <- .85
+basetype <- "solid"
+p <- pdata |>
+  filter(year(date) %in% 2019:2024) |>
+  ggplot(aes(date, value, colour = name, size = name, linetype = name)) +
+  geom_line() +
+  geom_point(size = 1.25) +
+  geom_hline(yintercept = 0) +
+  scale_colour_manual(
+    values = c(
+      "total" = "blue",
+      "gross" = "green",
+      "refunds" = "red",
+      "state/city offset" = "black"
+    )
+  ) +
+  scale_size_manual(
+    values = c(
+      "total" = 1.9,
+      "gross" = basesize,
+      "refunds" = basesize,
+      "state/city offset" = basesize
+    )
+  ) +
+  scale_linetype_manual(
+    values = c(
+      "total" = basetype,
+      "gross" = basetype,
+      "refunds" = basetype,
+      "state/city offset" = "dashed"
+    )
+  ) +
+  scale_y_continuous(
+    name = "$ millions",
+    labels = scales::label_number(scale = 1e-6)
+  ) +
+  labs(x = NULL) +
+  ggtitle("MTA Net self-employment tax components by year") +
+  theme_bw() +
+  facet_wrap(~year, ncol = 2, scales = "free_x")
+
+ggsave(
+  filename = fs::path(DRES, "nese_components.png"),
+  plot = p,
+  width = 10
+)
+
+```
+
+## Examine state-city offsets
+
+```{r}
+#| label: examine-offsets
+#| output: true
+
+first_data_date <- "2009-10-01"
+scoff <- df |>
+  filter(str_detect(vname, "scoff"), date >= first_data_date) |>
+  mutate(vname = str_remove(vname, "local_")) |>
+  select(date, vname, tax, value)
+# glimpse(scoff)
+# count(scoff, vname)
+
+# scoff |>
+#   ggplot(aes(date, value)) +
+#   geom_line() +
+#   facet_wrap(~vname, ncol = 1, scales = "free")
+
+pdata <- scoff |>
+  filter(vname %in% c("nycscoffset", "pmtscoffset"), year(date) >= 2019)
+
+p <- splot(pdata, vname) +
+  scale_y_continuous(
+    name = "$ millions",
+    labels = scales::label_number(scale = 1e-6)
+  ) +
+  ggtitle("NYC and MTA 'state/city offsets' by month, recent years")
+
+ggsave(
+  filename = fs::path(DRES, "state_city_offsets.png"),
   plot = p,
   width = 10
 )
